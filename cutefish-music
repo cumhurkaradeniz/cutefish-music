@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+import os, json, gettext, subprocess, webview
+
+t = gettext.translation("cutefish-music", localedir="/usr/share/locale", fallback=True)
+_ = t.gettext
+CFG = os.path.expanduser("~/.config/cutefish-music.json")
+
+def sys_theme():
+    try:
+        out = subprocess.check_output(
+            ["gdbus", "call", "--session", "--dest", "org.cutefish.Services",
+             "--object-path", "/org/cutefish/Services/Appearance",
+             "--method", "org.freedesktop.DBus.Properties.GetAll", ""],
+            stderr=subprocess.DEVNULL
+        ).decode().lower()
+        if "'isdarkmode': <false>" in out: return "light"
+        if "'isdarkmode': <true>" in out: return "dark"
+    except Exception:
+        pass
+    return "dark"
+
+class API:
+    def __init__(self):
+        self.proc = None
+        self.paused = False
+
+    def load(self):
+        c = json.load(open(CFG)) if os.path.exists(CFG) else {"dir": os.path.expanduser("~/Music"), "fav": [], "theme": "auto"}
+        tracks = []
+        d = c.get("dir", os.path.expanduser("~/Music"))
+        if os.path.isdir(d):
+            for r, dirs, fs in os.walk(d):
+                for f in sorted(fs):
+                    if f.lower().endswith((".mp3", ".flac", ".ogg", ".wav", ".m4a")):
+                        tracks.append({"p": os.path.join(r, f), "n": next(iter(os.path.splitext(f)))})
+        saved = c.get("theme", "auto")
+        active = sys_theme() if saved == "auto" else saved
+        return {"tracks": tracks, "fav": c.get("fav", []), "theme": saved, "active": active, "t": {"m": _("Music"), "s": _("Search..."), "a": _("All"), "f": _("Favorites"), "d": _("Folder")}}
+
+    def get_sys_theme(self):
+        return sys_theme()
+
+    def save_cfg(self, data):
+        c = json.load(open(CFG)) if os.path.exists(CFG) else {"dir": os.path.expanduser("~/Music"), "fav": [], "theme": "auto"}
+        c.update(data)
+        json.dump(c, open(CFG, "w"))
+
+    def play(self, path):
+        if self.proc: self.proc.terminate()
+        self.paused = False
+        self.proc = subprocess.Popen(["mpv", "--no-video", "--really-quiet", path])
+        return True
+
+    def toggle(self):
+        if not self.proc or self.proc.poll() is not None: return False
+        os.kill(self.proc.pid, 19 if not self.paused else 18)
+        self.paused = not self.paused
+        return not self.paused
+
+    def pick(self):
+        r = window.create_file_dialog(webview.FOLDER_DIALOG)
+        if r:
+            d = next(iter(r)) if isinstance(r, (list, tuple)) else str(r)
+            self.save_cfg({"dir": d})
+            return self.load()
+
+    def fav(self, lst):
+        self.save_cfg({"fav": lst})
+
+    def win(self, a):
+        if a == "c":
+            if self.proc: self.proc.terminate()
+            window.destroy()
+        elif a == "m": window.minimize()
+        elif a == "x": window.maximize()
+
+html = """<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+:root{--bg:linear-gradient(145deg,#181624,#261b35);--sb:rgba(0,0,0,.32);--bar:rgba(12,12,20,.78);--txt:#fff;--inp:#ffffff15;--brd:#ffffff1f;--hov:#ffffff12}
+body.light{--bg:linear-gradient(145deg,#f5f6fa,#eaeef5);--sb:rgba(255,255,255,.78);--bar:rgba(255,255,255,.9);--txt:#1c1c1e;--inp:rgba(0,0,0,.06);--brd:rgba(0,0,0,.1);--hov:rgba(0,0,0,.06)}
+*{box-sizing:border-box}body{margin:0;font-family:sans-serif;background:var(--bg);color:var(--txt);height:100vh;display:flex;flex-direction:column;user-select:none;transition:background .3s,color .3s}
+.top{flex:1;display:flex;overflow:hidden}.sb{width:210px;background:var(--sb);backdrop-filter:blur(20px);padding:14px;display:flex;flex-direction:column;gap:8px;border-right:1px solid var(--brd)}
+.dots{display:flex;align-items:center;gap:7px;margin-bottom:8px}.dots i{width:12px;height:12px;border-radius:50%;display:inline-block;cursor:pointer}
+input{background:var(--inp);border:1px solid var(--brd);border-radius:8px;padding:7px 10px;color:var(--txt);outline:none}
+.nav{padding:9px 12px;border-radius:9px;cursor:pointer;font-size:14px}.nav:hover{background:var(--hov)}.on{background:#fa2d4826;color:#fa2d48;font-weight:600}
+.mn{flex:1;padding:20px;display:flex;flex-direction:column;overflow:hidden}.lst{flex:1;overflow-y:auto;margin-top:12px}
+.row{display:flex;justify-content:space-between;padding:10px 12px;border-radius:9px;cursor:pointer;font-size:13.5px}.row:hover{background:var(--hov)}.act{background:#fa2d4822;color:#fa2d48;font-weight:600}
+.bar{height:70px;background:var(--bar);backdrop-filter:blur(20px);border-top:1px solid var(--brd);display:flex;align-items:center;justify-content:center;padding:0 20px;gap:20px}
+button{background:none;border:none;color:var(--txt);font-size:20px;cursor:pointer}.ply{width:42px;height:42px;border-radius:50%;background:#fa2d48;color:#fff}
+</style></head><body>
+<div class="top"><div class="sb pywebview-drag-region">
+<div class="dots"><i style="background:#ff5f56" onclick="pywebview.api.win('c')"></i><i style="background:#ffbd2e" onclick="pywebview.api.win('m')"></i><i style="background:#27c93f" onclick="pywebview.api.win('x')"></i><span style="margin-left:auto;cursor:pointer;font-size:14px" onclick="swapTheme()" id="thBtn">🌓</span></div>
+<b id="tm" style="color:#fa2d48;font-size:17px"></b><input id="q" oninput="draw()">
+<div class="nav on" id="na" onclick="tab='a';na.classList.add('on');nf.classList.remove('on');draw()"></div><div class="nav" id="nf" onclick="tab='f';nf.classList.add('on');na.classList.remove('on');draw()"></div>
+<div class="nav" id="nd" onclick="pick()" style="margin-top:auto;background:var(--inp)"></div>
+</div><div class="mn"><h3 id="now" style="margin:0;font-weight:500">---</h3><div class="lst" id="lst"></div></div></div>
+<div class="bar"><button onclick="step(-1)">⏮</button><button class="ply" id="pb" onclick="tog()">▶</button><button onclick="step(1)">⏭</button></div>
+<script>
+let all=[],fav=[],cur="",tab="a",thm="auto";
+async function applyTheme(m){thm=m;const act=(m=="auto"?await pywebview.api.get_sys_theme():m);document.body.className=(act=="light"?"light":"");thBtn.innerText=(m=="light"?"☀️":m=="dark"?"🌙":"🌓")}
+function swapTheme(){const next=(thm=="auto"?"light":thm=="light"?"dark":"auto");applyTheme(next);pywebview.api.save_cfg({theme:next})}
+setInterval(()=>{if(thm=="auto")applyTheme("auto")},2000);
+function draw(){const s=q.value.toLowerCase(),v=(tab=="f"?all.filter(x=>fav.includes(x.p)):all).filter(x=>x.n.toLowerCase().includes(s));
+lst.innerHTML=v.map(x=>`<div class="row ${cur==x.p?'act':''}" onclick="play('${x.p.replace(/'/g,"\\'")}')"><span>${x.n}</span><span onclick="tf(event,'${x.p.replace(/'/g,"\\'")}')">${fav.includes(x.p)?'♥':'♡'}</span></div>`).join("")}
+function tf(e,p){e.stopPropagation();fav=fav.includes(p)?fav.filter(x=>x!=p):[...fav,p];pywebview.api.fav(fav);draw()}
+async function play(p){const x=all.find(i=>i.p==p);if(!x)return;cur=p;now.innerText=x.n;pb.innerText="⏸";draw();await pywebview.api.play(p)}
+async function tog(){if(!cur&&all.length){play(all.at(0).p);return}const playing=await pywebview.api.toggle();pb.innerText=playing?"⏸":"▶"}
+function step(d){if(!all.length)return;const i=all.findIndex(x=>x.p==cur);play(all[(i+d+all.length)%all.length].p)}
+async function pick(){const r=await pywebview.api.pick();if(r){all=r.tracks;draw()}}
+window.addEventListener("pywebviewready",async()=>{const d=await pywebview.api.load();applyTheme(d.theme||"auto");all=d.tracks;fav=d.fav;tm.innerText=d.t.m;q.placeholder=d.t.s;na.innerText=d.t.a;nf.innerText=d.t.f;nd.innerText=d.t.d;draw()});
+</script></body></html>"""
+
+window = webview.create_window(_("Music"), html=html, js_api=API(), width=780, height=520, frameless=True)
+webview.start()
