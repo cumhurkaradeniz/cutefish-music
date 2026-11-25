@@ -2,7 +2,7 @@
 Name=Music
 Name[tr]=Müzik
 Exec=cutefish-music
-Icon=applications-multimedia
+Icon=cutefish-music
 Terminal=false
 Type=Application
 Categories=AudioVideo;Audio;
